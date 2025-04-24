@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "postinstall": "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true echo 'skip download'"
+    "postinstall": "set PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true && echo skip download"
   },
   "dependencies": {
     "chrome-aws-lambda": "^10.1.0",
