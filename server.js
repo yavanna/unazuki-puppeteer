@@ -5,33 +5,35 @@ const chromium = require('chrome-aws-lambda');
 const app = express();
 
 app.get('/unazuki', async (req, res) => {
-  let browser;
+  let browser = null;
+
   try {
     browser = await puppeteer.launch({
       args: chromium.args,
-      executablePath: await chromium.executablePath || '/usr/bin/chromium-browser',
+      executablePath: await chromium.executablePath || process.env.CHROME_EXECUTABLE_PATH,
       headless: chromium.headless,
     });
 
     const page = await browser.newPage();
+
     await page.goto(
       'https://www.river.go.jp/kawabou/pcfull/tm?itmkndCd=7&ofcCd=21556&obsCd=6&isCurrent=true&fld=0',
-      { waitUntil: 'domcontentloaded' }
+      { waitUntil: 'domcontentloaded', timeout: 60000 }
     );
 
     const html = await page.content();
-    await browser.close();
-
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
-
-  } catch (error) {
-    if (browser) await browser.close();
-    console.error('🔥 Puppeteer error:', error);
-    res.status(500).send('Puppeteer failed: ' + error.message);
+  } catch (err) {
+    console.error('❌ Puppeteer failed:', err.message);
+    res.status(500).send('Puppeteer failed: ' + err.message);
+  } finally {
+    if (browser !== null) {
+      await browser.close();
+    }
   }
 });
 
 app.listen(3000, () => {
-  console.log('Server running on port 3000');
+  console.log('✅ Puppeteer server running on port 3000');
 });
