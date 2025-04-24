@@ -1,21 +1,17 @@
 const express = require('express');
-const puppeteer = require('puppeteer-core');
-const chromium = require('chrome-aws-lambda');
+const puppeteer = require('puppeteer');
 
 const app = express();
 
 app.get('/unazuki', async (req, res) => {
-  let browser = null;
-
+  let browser;
   try {
     browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath || process.env.CHROME_EXECUTABLE_PATH,
-      headless: chromium.headless,
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
 
     const page = await browser.newPage();
-
     await page.goto(
       'https://www.river.go.jp/kawabou/pcfull/tm?itmkndCd=7&ofcCd=21556&obsCd=6&isCurrent=true&fld=0',
       { waitUntil: 'domcontentloaded', timeout: 60000 }
@@ -24,13 +20,11 @@ app.get('/unazuki', async (req, res) => {
     const html = await page.content();
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
-  } catch (err) {
-    console.error('❌ Puppeteer failed:', err.message);
-    res.status(500).send('Puppeteer failed: ' + err.message);
+  } catch (error) {
+    console.error('❌ Puppeteer failed:', error.message);
+    res.status(500).send('Puppeteer failed: ' + error.message);
   } finally {
-    if (browser !== null) {
-      await browser.close();
-    }
+    if (browser) await browser.close();
   }
 });
 
