@@ -1,0 +1,14 @@
+{
+  "name": "unazuki-puppeteer",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "postinstall": "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true echo 'skip download'"
+  },
+  "dependencies": {
+    "chrome-aws-lambda": "^10.1.0",
+    "puppeteer-core": "^21.3.8",
+    "express": "^4.18.2"
+  }
+}
