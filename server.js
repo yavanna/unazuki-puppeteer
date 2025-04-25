@@ -3,6 +3,11 @@ const puppeteer = require('puppeteer');
 
 const app = express();
 
+// ✅ ここを追加！（起動テスト用）
+app.get('/', (req, res) => {
+  res.send('✅ Server is running!');
+});
+
 app.get('/unazuki', async (req, res) => {
   let browser;
   try {
@@ -29,7 +34,7 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
-// ✅ 絶対に Railway が認識するポート変数を使う！
+// ✅ ポートはRailwayのPORT変数を使う
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`✅ Puppeteer server running on port ${port}`);
