@@ -28,7 +28,6 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
-// 💡 Railwayでは環境変数 PORT を使うのが重要！
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`✅ Puppeteer server running on port ${port}`);
