@@ -14,10 +14,7 @@ app.get('/unazuki', async (req, res) => {
     const page = await browser.newPage();
     await page.goto(
       'https://www.river.go.jp/kawabou/pcfull/tm?itmkndCd=7&ofcCd=21556&obsCd=6&isCurrent=true&fld=0',
-      {
-        waitUntil: 'domcontentloaded',
-        timeout: 60000
-      }
+      { waitUntil: 'domcontentloaded', timeout: 60000 }
     );
 
     const html = await page.content();
@@ -32,4 +29,8 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
-// ✅ Railway で必須
+// ✅ Railway環境変数PORTをちゃんと使う！
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`✅ Puppeteer server running on port ${port}`);
+});
