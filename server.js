@@ -147,8 +147,8 @@ async function fetchData() {
     }
   }
 
-  const sortedRows = validRows.sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
-  addLog('新しい順に整列完了', `データ数: ${sortedRows.length}`);
+  const sortedRows = validRows.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+  addLog('古い順に整列完了', `データ数: ${sortedRows.length}`);
 
   return sortedRows;
 }
