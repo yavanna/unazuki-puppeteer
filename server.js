@@ -1,4 +1,4 @@
-// server.js（tbody.innerText版・観測値一覧 正式対応）
+// server.js（tbody tr→td直読＋詳細ログあり版）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -37,24 +37,44 @@ async function fetchData() {
 
   const rows = await page.evaluate((year) => {
     const data = [];
-    const tbodyText = document.querySelector('table tbody').innerText;
-    const lines = tbodyText.split('\n');
+    const tableRows = document.querySelectorAll('table tbody tr');
+    console.log(`🔵 tableRows.length = ${tableRows.length}`);
+
     let lastDate = null;
 
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length < 11) continue;
+    tableRows.forEach((row, index) => {
+      const cells = row.querySelectorAll('td');
+      console.log(`🟡 tr[${index + 1}] td数: ${cells.length}`);
 
-      let [date, time, waterLevel, waterStorage, irrigationRate, effectiveRate, floodRate, inflow, outflow, rain10min, rainAccum] = parts;
+      if (cells.length < 11) {
+        console.warn(`⚠️ tr[${index + 1}]は11列未満のためスキップ`);
+        return;
+      }
 
-      if (date.includes('/')) {
+      let date = cells[0]?.innerText.trim();
+      const time = cells[1]?.innerText.trim();
+      const waterLevel = cells[2]?.innerText.trim();
+      const waterStorage = cells[3]?.innerText.trim();
+      const irrigationRate = cells[4]?.innerText.trim();
+      const effectiveRate = cells[5]?.innerText.trim();
+      const floodRate = cells[6]?.innerText.trim();
+      const inflow = cells[7]?.innerText.trim();
+      const outflow = cells[8]?.innerText.trim();
+      const rain10min = cells[9]?.innerText.trim();
+      const rainAccum = cells[10]?.innerText.trim();
+
+      if (date) {
         lastDate = date;
       } else {
-        time = date;
         date = lastDate;
       }
 
-      if (!date || !time) continue;
+      if (!date || !time) {
+        console.warn(`⚠️ tr[${index + 1}] 日付または時刻が取得できずスキップ`);
+        return;
+      }
+
+      console.log(`✅ tr[${index + 1}] ${date} ${time} 流入量=${inflow} 放流量=${outflow}`);
 
       const fullDateTime = new Date(`${year}/${date} ${time}`);
       fullDateTime.setHours(fullDateTime.getHours() + 9);
@@ -73,8 +93,10 @@ async function fetchData() {
         rain10min,
         rainAccum
       });
-    }
-    return data.slice(0, 20); // 最新20件だけ取得
+    });
+
+    console.log(`🔵 データ取得完了: ${data.length}件`);
+    return data.slice(0, 20);
   }, year);
 
   console.log('📋 取得したデータ:', rows);
