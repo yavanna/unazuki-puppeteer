@@ -36,17 +36,19 @@ async function fetchData() {
   await new Promise(resolve => setTimeout(resolve, 5000)); // 5秒待機
   console.log('🌐 ページロード完了');
 
-  // ★ ページからダム名を取得してチェック
-  const damName = await page.evaluate(() => {
-    const titleElement = document.querySelector('.pictTitle'); // ダム名が入る要素
-    return titleElement ? titleElement.innerText.trim() : '';
+  // ★ ページ全体テキストからダム名チェック
+  const pageText = await page.evaluate(() => {
+    return document.body.innerText;
   });
 
-  console.log('🏞 ダム名検出:', damName);
+  console.log('🏞 ページから取得した全文:');
+  console.log(pageText);
 
-  if (!damName.includes('宇奈月ダム')) {
-    console.error('❌ ダム名が違います！取得中止');
-    throw new Error('宇奈月ダムではないページです。中断します。');
+  if (!pageText.includes('宇奈月ダム')) {
+    const damMatch = pageText.match(/(.{0,10}ダム)/);
+    const detectedDamName = damMatch ? damMatch[1].trim() : '（不明）';
+    console.error(`❌ 宇奈月ダムではありません！（検出されたダム名らしきもの: ${detectedDamName}）`);
+    throw new Error(`違うダムでした: ${detectedDamName}`);
   }
 
   const year = new Date().getFullYear();
