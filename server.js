@@ -1,4 +1,4 @@
-// server.js（コピー相当データ直読版）
+// server.js（安心版：更新完了検知＋コピー相当データ読取り＋詳細ログ）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -28,20 +28,35 @@ async function fetchData() {
   const page = await browser.newPage();
   const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
 
+  let isContentCached = false;
+
   page.on('console', msg => {
     console.log(`📢 [browser log] ${msg.type()}: ${msg.text()}`);
+    if (msg.text().includes('Content has been cached for offline use')) {
+      console.log('✅ 更新完了サインを検知！');
+      isContentCached = true;
+    }
   });
 
-  console.info('🌐 ページ遷移:', url);
+  console.log('🌐 ページにアクセス開始:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('table tbody');
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  console.log('🌐 ページロード完了');
 
-  console.info('📋 コピー相当データ読み取り開始');
+  console.log('🕰 更新完了サイン検知待機開始（最大10秒）');
+  const timeout = Date.now() + 10000;
+  while (!isContentCached && Date.now() < timeout) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  if (!isContentCached) {
+    console.warn('⚠️ 更新完了サイン検知できず、タイムアウト。念のためさらに5秒待機');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+
+  console.log('📋 コピー相当データ読み取り開始');
   const copiedText = await page.evaluate(() => {
     const table = document.querySelector('table tbody');
     if (!table) return '';
-
     let result = '';
     const rows = table.querySelectorAll('tr');
     for (const row of rows) {
@@ -53,7 +68,16 @@ async function fetchData() {
     return result;
   });
 
-  console.info('📋 コピー相当データ:', copiedText);
+  if (copiedText.trim() === '') {
+    console.error('❌ コピー相当データ読み取り失敗（空データ）');
+    await browser.close();
+    throw new Error('コピー相当データが空でした');
+  } else {
+    const lines = copiedText.trim().split('\n');
+    console.log(`📋 コピー相当データ読み取り完了（行数: ${lines.length}）`);
+    console.log('📋 先頭3行サンプル:');
+    console.log(lines.slice(0, 3).join('\n'));
+  }
 
   const rows = copiedText.trim().split('\n').map(line => {
     const parts = line.split('\t');
