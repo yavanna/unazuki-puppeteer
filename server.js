@@ -59,12 +59,19 @@ async function fetchData() {
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
 
-  console.log('🖱 コピークリック開始');
+  console.log('🖱 コピーボタン探索とクリック開始');
   try {
-    await page.click('button:has-text("コピー")');
-    console.log('✅ コピークリック成功');
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const copyButton = buttons.find(btn => btn.innerText.trim() === 'コピー');
+      if (!copyButton) {
+        throw new Error('コピーというラベルのボタンが見つかりませんでした');
+      }
+      copyButton.click();
+    });
+    console.log('✅ コピーボタンクリック成功');
   } catch (error) {
-    console.error('❌ コピークリック失敗:', error.message);
+    console.error('❌ コピーボタンクリック失敗:', error.message);
     await browser.close();
     throw new Error('コピークリックに失敗しました');
   }
