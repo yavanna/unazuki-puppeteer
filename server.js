@@ -8,7 +8,6 @@ const port = process.env.PORT || 3000;
 // 🔥 超詳細ログ格納
 let explorationLogs = [];
 
-// 🔥 ログ追加用
 function addLog(step, detail, dump = null, level = "info") {
   explorationLogs.push({
     timestamp: new Date().toISOString(),
@@ -19,7 +18,6 @@ function addLog(step, detail, dump = null, level = "info") {
   });
 }
 
-// 環境変数
 const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
 const privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -27,7 +25,7 @@ const sheetName = 'FlowData';
 
 function getFetchTime() {
   const now = new Date();
-  now.setHours(now.getHours() + 9);
+  now.setHours(now.getHours() + 9); // JST補正
   const yyyy = now.getFullYear();
   const MM = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
@@ -44,6 +42,15 @@ async function fetchData() {
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   const page = await browser.newPage();
+
+  // ✅ キャッシュ無効化
+  await page.setCacheEnabled(false);
+  addLog('キャッシュ無効化設定', 'page.setCacheEnabled(false)実行');
+
+  // ✅ タイムゾーン日本時間設定
+  await page.emulateTimezone('Asia/Tokyo');
+  addLog('タイムゾーン設定', 'Asia/Tokyoに設定');
+
   const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
 
   page.on('console', msg => {
@@ -240,7 +247,6 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
-// 🔥 /getlogエンドポイントでログダウンロード
 app.get('/getlog', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(explorationLogs, null, 2));
