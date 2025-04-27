@@ -112,48 +112,51 @@ async function fetchData() {
   const tableData = await page.evaluate(() => {
     const result = [];
     const table = document.querySelector('table tbody');
-    if (!table) return result;
+    if (!table) return { rows: [], tableHTML: null };
+
     const rows = Array.from(table.querySelectorAll('tr'));
     for (const row of rows) {
       const cells = Array.from(row.querySelectorAll('td')).map(cell => cell.innerText.trim());
-      if (cells.length >= 11 && cells[0] && cells[1]) { // 日付と時刻が存在する行だけ
-        result.push({
-          date: cells[0],
-          time: cells[1],
-          waterLevel: cells[2],
-          waterStorage: cells[3],
-          irrigationRate: cells[4],
-          effectiveRate: cells[5],
-          floodRate: cells[6],
-          inflow: cells[7],
-          outflow: cells[8],
-          rain10min: cells[9],
-          rainAccum: cells[10]
-        });
-      }
+      result.push({
+        isValid: cells.length >= 2 && cells[0] && cells[1], // 日付・時刻が入っていれば有効
+        date: cells[0] || '',
+        time: cells[1] || '',
+        waterLevel: cells[2] || '',
+        waterStorage: cells[3] || '',
+        irrigationRate: cells[4] || '',
+        effectiveRate: cells[5] || '',
+        floodRate: cells[6] || '',
+        inflow: cells[7] || '',
+        outflow: cells[8] || '',
+        rain10min: cells[9] || '',
+        rainAccum: cells[10] || ''
+      });
     }
-    return result;
+    return { rows: result, tableHTML: table.parentElement.innerHTML };
   });
 
   await browser.close();
   addLog('ブラウザ終了', 'Puppeteerセッション正常終了');
 
-  if (tableData.length === 0) {
+  if (tableData.rows.length === 0) {
     addLog('テーブルエラー', 'テーブルデータが空でした', null, 'error');
     throw new Error('テーブルデータが空でした');
   }
 
-  addLog('テーブルデータ取得完了', `取得行数: ${tableData.length}`, tableData.slice(0, 5));
+  addLog('テーブルデータ取得完了', `取得行数: ${tableData.rows.length}`, tableData.rows.slice(0, 5));
+  addLog('テーブルHTMLダンプ', 'HTMLダンプ取得', tableData.tableHTML ? tableData.tableHTML.slice(0, 1000) : 'なし');
 
   const nowYear = new Date().getFullYear();
-  const rows = tableData.map(row => ({
-    datetime: `${nowYear}/${row.date} ${row.time}`,
-    ...row
-  }));
+  const validRows = tableData.rows
+    .filter(row => row.isValid)
+    .map(row => ({
+      datetime: `${nowYear}/${row.date} ${row.time}`,
+      ...row
+    }));
 
-  addLog('年付与＋整形完了', `行数: ${rows.length}`);
+  addLog('年付与＋整形完了', `有効データ行数: ${validRows.length}`);
 
-  const sortedRows = rows.sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
+  const sortedRows = validRows.sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
   addLog('新しい順並べ替え完了', `並び替え後行数: ${sortedRows.length}`);
 
   return sortedRows;
@@ -232,7 +235,7 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
-// 🔥 追加: /getlogで全ログ参照可能
+// 🔥 /getlogエンドポイントでログダウンロード
 app.get('/getlog', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(explorationLogs, null, 2));
