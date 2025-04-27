@@ -131,3 +131,8 @@ app.get('/', (req, res) => {
 app.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
 });
+
+// /health エンドポイント（コンテナ生存確認用）
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
