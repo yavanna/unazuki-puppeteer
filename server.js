@@ -25,15 +25,29 @@ function getFetchTime() {
 
 async function fetchData() {
   const browser = await puppeteer.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox'] // ★ executablePathなし
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   const page = await browser.newPage();
-  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6'; // ★宇奈月ダム専用URLに変更！
+  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6'; // 宇奈月ダム固定URL
 
   console.log('🌐 ページ遷移:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
 
   await new Promise(resolve => setTimeout(resolve, 5000)); // 5秒待機
+  console.log('🌐 ページロード完了');
+
+  // ★ ページからダム名を取得してチェック
+  const damName = await page.evaluate(() => {
+    const titleElement = document.querySelector('.pictTitle'); // ダム名が入る要素
+    return titleElement ? titleElement.innerText.trim() : '';
+  });
+
+  console.log('🏞 ダム名検出:', damName);
+
+  if (!damName.includes('宇奈月ダム')) {
+    console.error('❌ ダム名が違います！取得中止');
+    throw new Error('宇奈月ダムではないページです。中断します。');
+  }
 
   const year = new Date().getFullYear();
 
@@ -55,7 +69,7 @@ async function fetchData() {
       }
       if (time && inflow && !inflow.includes('--') && outflow && !outflow.includes('--')) {
         const fullDateTime = new Date(`${year}/${lastDate} ${time}`);
-        fullDateTime.setHours(fullDateTime.getHours() + 9); // ★観測時刻も日本時間に補正！
+        fullDateTime.setHours(fullDateTime.getHours() + 9); // ★観測時刻も日本時間に補正
 
         const formattedDateTime = fullDateTime.getFullYear() + '/' +
           String(fullDateTime.getMonth() + 1).padStart(2, '0') + '/' +
@@ -68,6 +82,8 @@ async function fetchData() {
     }
     return data.slice(0, 10);
   }, year);
+
+  console.log('📋 取得したデータ:', rows);
 
   await browser.close();
   return rows;
@@ -133,7 +149,7 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
-// /health エンドポイント（復活！）
+// /health エンドポイント
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
