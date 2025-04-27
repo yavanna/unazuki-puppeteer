@@ -1,3 +1,4 @@
+// server.js（改良版）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -5,15 +6,14 @@ const { google } = require('googleapis');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// 環境変数からGoogle認証情報を取得
 const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
 const privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-const sheetName = 'FlowData'; // シート名
+const sheetName = 'FlowData';
 
 function getFetchTime() {
   const now = new Date();
-  now.setHours(now.getHours() + 9); // ★日本時間に補正
+  now.setHours(now.getHours() + 9);
   const yyyy = now.getFullYear();
   const MM = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
@@ -24,30 +24,21 @@ function getFetchTime() {
 }
 
 async function fetchData() {
-  const browser = await puppeteer.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+  const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const page = await browser.newPage();
-  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6'; // 宇奈月ダム固定URL
+  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
 
   console.log('🌐 ページ遷移:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
 
-  await new Promise(resolve => setTimeout(resolve, 5000)); // 5秒待機
+  await new Promise(resolve => setTimeout(resolve, 5000));
   console.log('🌐 ページロード完了');
 
-  // ★ ページ全体テキストからダム名チェック
-  const pageText = await page.evaluate(() => {
-    return document.body.innerText;
-  });
-
-  console.log('🏞 ページから取得した全文:');
-  console.log(pageText);
+  const pageText = await page.evaluate(() => document.body.innerText);
 
   if (!pageText.includes('宇奈月ダム')) {
     const damMatch = pageText.match(/(.{0,10}ダム)/);
     const detectedDamName = damMatch ? damMatch[1].trim() : '（不明）';
-    console.error(`❌ 宇奈月ダムではありません！（検出されたダム名らしきもの: ${detectedDamName}）`);
     throw new Error(`違うダムでした: ${detectedDamName}`);
   }
 
@@ -63,26 +54,39 @@ async function fetchData() {
       const date = cells[0]?.innerText.trim();
       const time = cells[1]?.innerText.trim();
       const waterLevel = cells[2]?.innerText.trim();
+      const waterStorage = cells[3]?.innerText.trim();
+      const irrigationRate = cells[4]?.innerText.trim();
+      const effectiveRate = cells[5]?.innerText.trim();
+      const floodRate = cells[6]?.innerText.trim();
       const inflow = cells[7]?.innerText.trim();
       const outflow = cells[8]?.innerText.trim();
+      const rain10min = cells[9]?.innerText.trim();
+      const rainAccum = cells[10]?.innerText.trim();
 
       if (date) {
         lastDate = date;
       }
-      if (time && inflow && !inflow.includes('--') && outflow && !outflow.includes('--')) {
+      if (time && inflow && outflow && !inflow.includes('--') && !outflow.includes('--')) {
         const fullDateTime = new Date(`${year}/${lastDate} ${time}`);
-        fullDateTime.setHours(fullDateTime.getHours() + 9); // ★観測時刻も日本時間に補正
+        fullDateTime.setHours(fullDateTime.getHours() + 9);
 
-        const formattedDateTime = fullDateTime.getFullYear() + '/' +
-          String(fullDateTime.getMonth() + 1).padStart(2, '0') + '/' +
-          String(fullDateTime.getDate()).padStart(2, '0') + ' ' +
-          String(fullDateTime.getHours()).padStart(2, '0') + ':' +
-          String(fullDateTime.getMinutes()).padStart(2, '0');
+        const formattedDateTime = `${fullDateTime.getFullYear()}/${String(fullDateTime.getMonth() + 1).padStart(2, '0')}/${String(fullDateTime.getDate()).padStart(2, '0')} ${String(fullDateTime.getHours()).padStart(2, '0')}:${String(fullDateTime.getMinutes()).padStart(2, '0')}`;
 
-        data.push({ datetime: formattedDateTime, waterLevel, inflow, outflow });
+        data.push({
+          datetime: formattedDateTime,
+          waterLevel,
+          waterStorage,
+          irrigationRate,
+          effectiveRate,
+          floodRate,
+          inflow,
+          outflow,
+          rain10min,
+          rainAccum
+        });
       }
     }
-    return data.slice(0, 10);
+    return data;
   }, year);
 
   console.log('📋 取得したデータ:', rows);
@@ -126,8 +130,14 @@ async function writeToSheet(newRows) {
         fetchTime,
         row.datetime,
         row.waterLevel,
+        row.waterStorage,
+        row.irrigationRate,
+        row.effectiveRate,
+        row.floodRate,
         row.inflow,
-        row.outflow
+        row.outflow,
+        row.rain10min,
+        row.rainAccum
       ]),
     },
   });
@@ -135,7 +145,6 @@ async function writeToSheet(newRows) {
   console.log('✅ シート更新完了');
 }
 
-// /unazuki エンドポイント
 app.get('/unazuki', async (req, res) => {
   try {
     const rows = await fetchData();
@@ -151,17 +160,14 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
-// /health エンドポイント
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// / ルート
 app.get('/', (req, res) => {
   res.send('Hello Unazuki World!');
 });
 
-// サーバー起動
 app.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
 });
