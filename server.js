@@ -1,4 +1,4 @@
-// server.js（観測値一覧から過去30件取得版）
+// server.js（観測値一覧から過去20件取得版）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -30,10 +30,8 @@ async function fetchData() {
 
   console.log('🌐 ページ遷移:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  console.log('🌐 ページロード完了');
-
   await page.waitForSelector('table tbody');
+  await new Promise(resolve => setTimeout(resolve, 5000));
 
   const year = new Date().getFullYear();
 
@@ -60,7 +58,7 @@ async function fetchData() {
         lastDate = date;
       }
 
-      if (time && inflow && outflow) {
+      if (time && waterLevel && inflow && outflow) {
         const fullDateTime = new Date(`${year}/${lastDate} ${time}`);
         fullDateTime.setHours(fullDateTime.getHours() + 9);
 
@@ -80,7 +78,7 @@ async function fetchData() {
         });
       }
     }
-    return data.slice(0, 30); // ★ここで過去30件だけ取得
+    return data.slice(0, 20); // 最新20件だけ取得
   }, year);
 
   console.log('📋 取得したデータ:', rows);
