@@ -1,4 +1,4 @@
-// server.js（innerText版 最新観測値パース対応）
+// server.js（観測値一覧から過去30件取得版）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -33,39 +33,60 @@ async function fetchData() {
   await new Promise(resolve => setTimeout(resolve, 5000));
   console.log('🌐 ページロード完了');
 
-  const pageText = await page.evaluate(() => document.body.innerText);
+  await page.waitForSelector('table tbody');
 
-  if (!pageText.includes('宇奈月ダム')) {
-    throw new Error('違うダムページです');
-  }
+  const year = new Date().getFullYear();
 
-  const observationMatch = pageText.match(/最新観測値(\d{4})\/\d{2}\/\d{2} (\d{2}:\d{2})/);
-  const dataMatch = pageText.match(/貯水位:(\d+\.\d+)m.*?貯水量:(\d+\.\d+)千m³.*?全流入量:(\d+\.\d+)m³\/s.*?全放流量:(\d+\.\d+)m³\/s.*?貯水率治水容量:([\d\-.]+).*?貯水率有効容量:(\d+\.\d+)%.*?貯水率利水容量:(\d+\.\d+)%.*?時間雨量:(\d+\.\d+)mm.*?10分雨量:(\d+\.\d+)mm.*?降り始めからの雨量:(\d+\.\d+)mm/);
+  const rows = await page.evaluate((year) => {
+    const data = [];
+    const tableRows = document.querySelectorAll('table tbody tr');
+    let lastDate = null;
 
-  if (!observationMatch || !dataMatch) {
-    throw new Error('最新観測値データが見つかりません');
-  }
+    for (const row of tableRows) {
+      const cells = row.querySelectorAll('td');
+      const date = cells[0]?.innerText.trim();
+      const time = cells[1]?.innerText.trim();
+      const waterLevel = cells[2]?.innerText.trim();
+      const waterStorage = cells[3]?.innerText.trim();
+      const irrigationRate = cells[4]?.innerText.trim();
+      const effectiveRate = cells[5]?.innerText.trim();
+      const floodRate = cells[6]?.innerText.trim();
+      const inflow = cells[7]?.innerText.trim();
+      const outflow = cells[8]?.innerText.trim();
+      const rain10min = cells[9]?.innerText.trim();
+      const rainAccum = cells[10]?.innerText.trim();
 
-  const observationDatetime = `${observationMatch[1]}/${observationMatch[0].slice(7,17).replace(/\//g,'/')} ${observationMatch[2]}`;
+      if (date) {
+        lastDate = date;
+      }
 
-  const row = {
-    datetime: observationDatetime,
-    waterLevel: dataMatch[1],
-    waterStorage: dataMatch[2],
-    inflow: dataMatch[3],
-    outflow: dataMatch[4],
-    floodRate: dataMatch[5],
-    effectiveRate: dataMatch[6],
-    irrigationRate: dataMatch[7],
-    rainHour: dataMatch[8],
-    rain10min: dataMatch[9],
-    rainAccum: dataMatch[10]
-  };
+      if (time && inflow && outflow) {
+        const fullDateTime = new Date(`${year}/${lastDate} ${time}`);
+        fullDateTime.setHours(fullDateTime.getHours() + 9);
 
-  console.log('📋 取得したデータ:', row);
+        const formattedDateTime = `${fullDateTime.getFullYear()}/${String(fullDateTime.getMonth() + 1).padStart(2, '0')}/${String(fullDateTime.getDate()).padStart(2, '0')} ${String(fullDateTime.getHours()).padStart(2, '0')}:${String(fullDateTime.getMinutes()).padStart(2, '0')}`;
+
+        data.push({
+          datetime: formattedDateTime,
+          waterLevel,
+          waterStorage,
+          irrigationRate,
+          effectiveRate,
+          floodRate,
+          inflow,
+          outflow,
+          rain10min,
+          rainAccum
+        });
+      }
+    }
+    return data.slice(0, 30); // ★ここで過去30件だけ取得
+  }, year);
+
+  console.log('📋 取得したデータ:', rows);
 
   await browser.close();
-  return [row];
+  return rows;
 }
 
 async function writeToSheet(newRows) {
@@ -85,7 +106,8 @@ async function writeToSheet(newRows) {
   const existingObservedTimes = res.data.values ? res.data.values.flat() : [];
   const fetchTime = getFetchTime();
 
-  const rowsToAdd = newRows.filter(row => !existingObservedTimes.includes(row.datetime));
+  const sortedRows = newRows.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+  const rowsToAdd = sortedRows.filter(row => !existingObservedTimes.includes(row.datetime));
 
   if (rowsToAdd.length === 0) {
     console.log('✅ 追加データなし');
