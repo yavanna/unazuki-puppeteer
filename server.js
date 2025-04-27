@@ -1,39 +1,3 @@
-const express = require('express');
-const puppeteer = require('puppeteer');
-const { google } = require('googleapis');
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-let explorationLogs = [];
-
-function addLog(step, detail, dump = null, level = "info") {
-  explorationLogs.push({
-    timestamp: new Date().toISOString(),
-    step,
-    detail,
-    dump,
-    level
-  });
-}
-
-const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-const privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
-const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-const sheetName = 'FlowData';
-
-function getFetchTime() {
-  const now = new Date();
-  now.setHours(now.getHours() + 9); // JST
-  const yyyy = now.getFullYear();
-  const MM = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const HH = String(now.getHours()).padStart(2, '0');
-  const mm = String(now.getMinutes()).padStart(2, '0');
-  const ss = String(now.getSeconds()).padStart(2, '0');
-  return `${yyyy}-${MM}-${dd} ${HH}:${mm}:${ss}`;
-}
-
 async function fetchData() {
   addLog('Puppeteer起動', 'ブラウザセッション開始');
 
@@ -147,93 +111,12 @@ async function fetchData() {
     }
   }
 
+  // 🌟 ここで並び替え（古い順）
   const sortedRows = validRows.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
   addLog('古い順に整列完了', `データ数: ${sortedRows.length}`);
 
+  // 🌟 並び順をダンプ出力
+  addLog('並び替え後データ確認', '', sortedRows.map(row => row.datetime));
+
   return sortedRows;
 }
-
-async function writeToSheet(sortedRows) {
-  const auth = new google.auth.JWT(
-    clientEmail,
-    null,
-    privateKey,
-    ['https://www.googleapis.com/auth/spreadsheets']
-  );
-  const sheets = google.sheets({ version: 'v4', auth });
-
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${sheetName}!B2:B`
-  });
-
-  const existingObservedTimes = res.data.values ? res.data.values.flat() : [];
-  const fetchTime = getFetchTime();
-
-  const rowsToAdd = sortedRows.filter(row => !existingObservedTimes.includes(row.datetime));
-
-  addLog('追加対象件数', rowsToAdd.length);
-
-  if (rowsToAdd.length === 0) {
-    addLog('追加不要', '既存データと重複のみ');
-    return;
-  }
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${sheetName}!A1`,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: {
-      values: rowsToAdd.map(row => [
-        fetchTime,
-        row.datetime,
-        row.waterLevel,
-        row.waterStorage,
-        row.irrigationRate,
-        row.effectiveRate,
-        row.floodRate,
-        row.inflow,
-        row.outflow,
-        row.rain10min,
-        row.rainAccum
-      ]),
-    },
-  });
-
-  addLog('スプレッドシート書き込み完了', `追加行数: ${rowsToAdd.length}`);
-}
-
-app.get('/unazuki', async (req, res) => {
-  try {
-    explorationLogs = [];
-    const sortedRows = await fetchData();
-    if (sortedRows.length === 0) {
-      res.send('❌ データなし');
-      return;
-    }
-    await writeToSheet(sortedRows);
-    res.send('✅ 保存完了！');
-  } catch (error) {
-    addLog('サーバーエラー', error.message, null, 'error');
-    console.error('❌ サーバーエラー:', error.message);
-    res.status(500).send('❌ サーバーエラー');
-  }
-});
-
-app.get('/getlog', (req, res) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.send(JSON.stringify(explorationLogs, null, 2));
-});
-
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
-
-app.get('/', (req, res) => {
-  res.send('Hello Unazuki World!');
-});
-
-app.listen(port, () => {
-  console.log(`🚀 Server running at http://localhost:${port}`);
-});
