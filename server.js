@@ -1,4 +1,4 @@
-// server.js（最堅牢版・堅牢ログ8項目全部入り）
+// server.js（最堅牢版＋page.on('console')追加でブラウザログも完全キャッチ）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -27,6 +27,11 @@ async function fetchData() {
   const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const page = await browser.newPage();
   const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
+
+  // 🔥 ブラウザ内のconsoleログをNode側にも表示する設定
+  page.on('console', msg => {
+    console.log(`📢 [browser log] ${msg.type()}: ${msg.text()}`);
+  });
 
   console.info('🌐 ページ遷移:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
