@@ -1,4 +1,4 @@
-// server.js（最堅牢版＋page.on('console')追加でブラウザログも完全キャッチ）
+// server.js（スクロール＋再取得版、仮想DOM対策完全対応）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -28,7 +28,6 @@ async function fetchData() {
   const page = await browser.newPage();
   const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
 
-  // 🔥 ブラウザ内のconsoleログをNode側にも表示する設定
   page.on('console', msg => {
     console.log(`📢 [browser log] ${msg.type()}: ${msg.text()}`);
   });
@@ -36,7 +35,14 @@ async function fetchData() {
   console.info('🌐 ページ遷移:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
   await page.waitForSelector('table tbody');
-  await new Promise(resolve => setTimeout(resolve, 5000));
+  await new Promise(resolve => setTimeout(resolve, 3000));
+
+  console.info('🛹 tbodyスクロールして最新行を描画');
+  await page.evaluate(() => {
+    const tableBody = document.querySelector('table tbody');
+    tableBody.scrollIntoView({ behavior: 'instant', block: 'start' });
+  });
+  await new Promise(resolve => setTimeout(resolve, 3000));
 
   const year = new Date().getFullYear();
 
@@ -64,18 +70,20 @@ async function fetchData() {
         return text;
       });
 
-      let date = rawValues[0];
-      let time = rawValues[1];
-      if (!date.includes('/')) {
-        time = date;
-        date = lastDate;
-        console.info(`🔵 tr[${rowIndex + 1}] 日付補完: ${date}`);
-      } else {
-        lastDate = date;
-      }
+      let rawDate = rawValues[0];
+      let rawTime = rawValues[1];
 
-      if (!date || !time) {
-        console.warn(`⚠️ tr[${rowIndex + 1}] 日付または時刻が読めないのでスキップ`);
+      let date, time;
+
+      if (rawDate && rawDate.includes('/')) {
+        date = rawDate;
+        time = rawTime;
+        lastDate = date;
+      } else if (rawTime) {
+        date = lastDate;
+        time = rawTime;
+      } else {
+        console.warn(`⚠️ tr[${rowIndex+1}] 日付も時刻も空！スキップ`);
         failCount++;
         return;
       }
@@ -112,6 +120,8 @@ async function fetchData() {
   console.info('📋 最終取得データ:', JSON.stringify(rows, null, 2));
 
   await browser.close();
+  console.info('🛑 Puppeteerブラウザクローズ完了');
+
   return rows;
 }
 
@@ -168,10 +178,14 @@ async function writeToSheet(newRows) {
 app.get('/unazuki', async (req, res) => {
   try {
     const rows = await fetchData();
+    console.info('📥 fetchData完了、rows件数:', rows.length);
+
     if (rows.length === 0) {
+      console.info('✅ 追加データなし');
       res.send('❌ データなし');
       return;
     }
+
     await writeToSheet(rows);
     res.send('✅ 保存完了！');
   } catch (error) {
