@@ -13,6 +13,7 @@ const sheetName = 'FlowData'; // シート名（FlowData）
 
 function getFetchTime() {
   const now = new Date();
+  now.setHours(now.getHours() + 9); // ★日本時間に補正
   const yyyy = now.getFullYear();
   const MM = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
@@ -23,9 +24,13 @@ function getFetchTime() {
 }
 
 async function fetchData() {
-  const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    executablePath: '/usr/bin/google-chrome'
+  });
   const page = await browser.newPage();
-  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?itmkndCd=7&ofcCd=21556&obsCd=6&isCurrent=true&fld=0';
+  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6'; // ★宇奈月ダム専用URLに固定！
 
   console.log('🌐 ページ遷移:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
@@ -51,8 +56,16 @@ async function fetchData() {
         lastDate = date;
       }
       if (time && inflow && !inflow.includes('--') && outflow && !outflow.includes('--')) {
-        const fullDateTime = `${year}/${lastDate} ${time}`;
-        data.push({ datetime: fullDateTime, waterLevel, inflow, outflow });
+        const fullDateTime = new Date(`${year}/${lastDate} ${time}`);
+        fullDateTime.setHours(fullDateTime.getHours() + 9); // ★観測時刻も日本時間に補正！
+
+        const formattedDateTime = fullDateTime.getFullYear() + '/' +
+          String(fullDateTime.getMonth() + 1).padStart(2, '0') + '/' +
+          String(fullDateTime.getDate()).padStart(2, '0') + ' ' +
+          String(fullDateTime.getHours()).padStart(2, '0') + ':' +
+          String(fullDateTime.getMinutes()).padStart(2, '0');
+
+        data.push({ datetime: formattedDateTime, waterLevel, inflow, outflow });
       }
     }
     return data.slice(0, 10);
@@ -130,9 +143,4 @@ app.get('/', (req, res) => {
 // サーバー起動
 app.listen(port, () => {
   console.log(`🚀 Server running at http://localhost:${port}`);
-});
-
-// /health エンドポイント（コンテナ生存確認用）
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
 });
