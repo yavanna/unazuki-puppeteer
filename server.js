@@ -1,4 +1,3 @@
-// server.js（安心版：更新完了検知＋コピー相当データ読取り＋詳細ログ）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -24,7 +23,14 @@ function getFetchTime() {
 }
 
 async function fetchData() {
-  const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  console.log('🌐 Puppeteer起動開始');
+  const browser = await puppeteer.launch({
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--enable-experimental-web-platform-features'
+    ]
+  });
   const page = await browser.newPage();
   const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
 
@@ -49,41 +55,52 @@ async function fetchData() {
   }
 
   if (!isContentCached) {
-    console.warn('⚠️ 更新完了サイン検知できず、タイムアウト。念のためさらに5秒待機');
+    console.warn('⚠️ 更新完了サイン検知できず、タイムアウト。さらに5秒待機');
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
 
-  console.log('📋 コピー相当データ読み取り開始');
-  const copiedText = await page.evaluate(() => {
-    const table = document.querySelector('table tbody');
-    if (!table) return '';
-    let result = '';
-    const rows = table.querySelectorAll('tr');
-    for (const row of rows) {
-      const cells = Array.from(row.querySelectorAll('td')).map(cell => cell.innerText.trim());
-      if (cells.length > 0) {
-        result += cells.join('\t') + '\n';
-      }
-    }
-    return result;
-  });
-
-  if (copiedText.trim() === '') {
-    console.error('❌ コピー相当データ読み取り失敗（空データ）');
+  console.log('🖱 コピークリック開始');
+  try {
+    await page.click('button:has-text("コピー")');
+    console.log('✅ コピークリック成功');
+  } catch (error) {
+    console.error('❌ コピークリック失敗:', error.message);
     await browser.close();
-    throw new Error('コピー相当データが空でした');
-  } else {
-    const lines = copiedText.trim().split('\n');
-    console.log(`📋 コピー相当データ読み取り完了（行数: ${lines.length}）`);
-    console.log('📋 先頭3行サンプル:');
-    console.log(lines.slice(0, 3).join('\n'));
+    throw new Error('コピークリックに失敗しました');
   }
 
-  const rows = copiedText.trim().split('\n').map(line => {
+  console.log('🕰 コピークリック後待機（1秒）');
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  console.log('📋 クリップボード読み取り開始');
+  let clipboardText = '';
+  try {
+    clipboardText = await page.evaluate(async () => {
+      return await navigator.clipboard.readText();
+    });
+    console.log(`✅ クリップボード読み取り成功（${clipboardText.length} bytes）`);
+  } catch (error) {
+    console.error('❌ クリップボード読み取り失敗:', error.message);
+    await browser.close();
+    throw new Error('クリップボード読み取りに失敗しました');
+  }
+
+  if (clipboardText.trim() === '') {
+    console.error('❌ クリップボード空データ');
+    await browser.close();
+    throw new Error('クリップボード内容が空でした');
+  }
+
+  console.log('📋 データパース開始');
+  const lines = clipboardText.trim().split('\n');
+  console.log(`📋 パース行数: ${lines.length}`);
+  console.log('📋 先頭3行サンプル:\n', lines.slice(0, 3).join('\n'));
+
+  const nowYear = new Date().getFullYear();
+  const rows = lines.map(line => {
     const parts = line.split('\t');
     return {
-      date: parts[0] || '',
-      time: parts[1] || '',
+      datetime: `${nowYear}/${parts[0]} ${parts[1]}`, // 観測日＋観測時刻
       waterLevel: parts[2] || '',
       waterStorage: parts[3] || '',
       irrigationRate: parts[4] || '',
@@ -96,13 +113,19 @@ async function fetchData() {
     };
   });
 
+  console.log('📋 年付与＋観測日時整形完了');
+
+  console.log('📋 データ並び替え開始（新しい順）');
+  const sortedRows = rows.sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
+  console.log('📋 データ並び替え完了');
+
   await browser.close();
   console.info('🛑 Puppeteerブラウザクローズ完了');
 
-  return rows;
+  return sortedRows;
 }
 
-async function writeToSheet(newRows) {
+async function writeToSheet(sortedRows) {
   const auth = new google.auth.JWT(
     clientEmail,
     null,
@@ -111,6 +134,7 @@ async function writeToSheet(newRows) {
   );
   const sheets = google.sheets({ version: 'v4', auth });
 
+  console.log('📥 スプレッドシート既存データ取得開始');
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${sheetName}!B2:B`
@@ -119,14 +143,18 @@ async function writeToSheet(newRows) {
   const existingObservedTimes = res.data.values ? res.data.values.flat() : [];
   const fetchTime = getFetchTime();
 
-  const sortedRows = newRows.sort((a, b) => new Date(`${a.date} ${a.time}`) - new Date(`${b.date} ${b.time}`));
-  const rowsToAdd = sortedRows.filter(row => !existingObservedTimes.includes(`${row.date} ${row.time}`));
+  console.log('📥 既存観測時刻数:', existingObservedTimes.length);
+
+  const rowsToAdd = sortedRows.filter(row => !existingObservedTimes.includes(row.datetime));
+
+  console.log('📥 新規追加対象行数:', rowsToAdd.length);
 
   if (rowsToAdd.length === 0) {
     console.info('✅ 追加データなし');
     return;
   }
 
+  console.log('📥 スプレッドシート書き込み開始');
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${sheetName}!A1`,
@@ -135,7 +163,7 @@ async function writeToSheet(newRows) {
     requestBody: {
       values: rowsToAdd.map(row => [
         fetchTime,
-        `${row.date} ${row.time}`,
+        row.datetime,
         row.waterLevel,
         row.waterStorage,
         row.irrigationRate,
@@ -148,24 +176,23 @@ async function writeToSheet(newRows) {
       ]),
     },
   });
-
-  console.info('✅ シート更新完了');
+  console.info('✅ スプレッドシート書き込み成功');
 }
 
 app.get('/unazuki', async (req, res) => {
   try {
-    const rows = await fetchData();
-    console.info('📥 fetchData完了、rows件数:', rows.length);
+    const sortedRows = await fetchData();
+    console.info('📥 fetchData完了、rows件数:', sortedRows.length);
 
-    if (rows.length === 0) {
+    if (sortedRows.length === 0) {
       res.send('❌ データなし');
       return;
     }
 
-    await writeToSheet(rows);
+    await writeToSheet(sortedRows);
     res.send('✅ 保存完了！');
   } catch (error) {
-    console.error('❌ エラー:', error.message);
+    console.error('❌ サーバーエラー:', error.message);
     res.status(500).send('❌ サーバーエラー');
   }
 });
