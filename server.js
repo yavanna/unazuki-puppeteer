@@ -5,6 +5,20 @@ const { google } = require('googleapis');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// 🔥 超詳細ログ格納
+let explorationLogs = [];
+
+// 🔥 ログ追加用
+function addLog(step, detail, dump = null, level = "info") {
+  explorationLogs.push({
+    timestamp: new Date().toISOString(),
+    step,
+    detail,
+    dump,
+    level
+  });
+}
+
 // 環境変数
 const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
 const privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
@@ -24,7 +38,8 @@ function getFetchTime() {
 }
 
 async function fetchData() {
-  console.log('🌐 Puppeteer起動開始');
+  addLog('Puppeteer起動', 'ブラウザセッション開始');
+
   const browser = await puppeteer.launch({
     args: [
       '--no-sandbox',
@@ -35,20 +50,20 @@ async function fetchData() {
   const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
 
   page.on('console', msg => {
-    console.log(`📢 [browser log] ${msg.type()}: ${msg.text()}`);
+    addLog('ブラウザconsole', msg.text(), null, 'console');
   });
 
-  console.log('🌐 ページアクセス:', url);
+  addLog('ページアクセス', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
-  console.log('🌐 ページロード完了');
+  addLog('ページロード完了', '');
 
-  console.log('🕰 更新完了サイン検知待機開始（最大10秒）');
+  addLog('更新完了サイン待機開始', '最大10秒');
   let isContentCached = false;
   const timeout = Date.now() + 10000;
   page.on('console', msg => {
     if (msg.text().includes('Content has been cached for offline use')) {
       isContentCached = true;
-      console.log('✅ 更新完了サイン検知');
+      addLog('更新完了サイン検知', 'Content cached detected');
     }
   });
 
@@ -57,14 +72,42 @@ async function fetchData() {
   }
 
   if (!isContentCached) {
-    console.warn('⚠️ 更新完了サイン検知できずタイムアウト。念のため5秒追加待機');
+    addLog('更新完了サイン検知失敗', 'タイムアウト到達', null, 'warning');
     await new Promise(resolve => setTimeout(resolve, 5000));
   }
 
-  console.log('🕰 Content Cached検知後さらに2秒待機');
+  addLog('追加待機', 'Content Cached検知後さらに2秒待機');
   await new Promise(resolve => setTimeout(resolve, 2000));
 
-  console.log('📋 テーブルデータ読み取り開始');
+  addLog('スクロール開始', '行数監視しながらスクロール');
+
+  let previousRowCount = 0;
+  for (let i = 0; i < 10; i++) { // 最大10回スクロール
+    const currentRowCount = await page.evaluate(() => {
+      const table = document.querySelector('table tbody');
+      return table ? table.querySelectorAll('tr').length : 0;
+    });
+
+    addLog('スクロールチェック', `回数${i + 1}: 前回${previousRowCount}件 → 今回${currentRowCount}件`);
+
+    if (currentRowCount <= previousRowCount) {
+      addLog('スクロール停止', '行数増加なし → 停止');
+      break;
+    }
+
+    previousRowCount = currentRowCount;
+
+    await page.evaluate(() => {
+      window.scrollBy(0, window.innerHeight);
+    });
+
+    addLog('スクロール操作', '1画面分スクロール実施');
+
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    addLog('スクロール後待機', '2秒待機');
+  }
+
+  addLog('テーブル読み取り開始', '');
 
   const tableData = await page.evaluate(() => {
     const result = [];
@@ -93,15 +136,14 @@ async function fetchData() {
   });
 
   await browser.close();
-  console.info('🛑 Puppeteerブラウザセッション終了');
+  addLog('ブラウザ終了', 'Puppeteerセッション正常終了');
 
   if (tableData.length === 0) {
+    addLog('テーブルエラー', 'テーブルデータが空でした', null, 'error');
     throw new Error('テーブルデータが空でした');
   }
 
-  console.log(`📋 読み取った行数: ${tableData.length}`);
-  console.log('📋 先頭3行サンプル:');
-  console.log(tableData.slice(0, 3));
+  addLog('テーブルデータ取得完了', `取得行数: ${tableData.length}`, tableData.slice(0, 5));
 
   const nowYear = new Date().getFullYear();
   const rows = tableData.map(row => ({
@@ -109,11 +151,10 @@ async function fetchData() {
     ...row
   }));
 
-  console.log('📋 年付与＋観測日時整形完了');
+  addLog('年付与＋整形完了', `行数: ${rows.length}`);
 
-  console.log('📋 新しい順に並べ替え開始');
   const sortedRows = rows.sort((a, b) => new Date(b.datetime) - new Date(a.datetime));
-  console.log('📋 並べ替え完了');
+  addLog('新しい順並べ替え完了', `並び替え後行数: ${sortedRows.length}`);
 
   return sortedRows;
 }
@@ -127,7 +168,7 @@ async function writeToSheet(sortedRows) {
   );
   const sheets = google.sheets({ version: 'v4', auth });
 
-  console.log('📥 既存データ取得開始');
+  addLog('既存データ取得開始', '');
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${sheetName}!B2:B`
@@ -136,18 +177,19 @@ async function writeToSheet(sortedRows) {
   const existingObservedTimes = res.data.values ? res.data.values.flat() : [];
   const fetchTime = getFetchTime();
 
-  console.log('📥 既存観測時刻数:', existingObservedTimes.length);
+  addLog('既存データ件数', existingObservedTimes.length);
 
   const rowsToAdd = sortedRows.filter(row => !existingObservedTimes.includes(row.datetime));
 
-  console.log('📥 新規追加対象行数:', rowsToAdd.length);
+  addLog('追加対象件数', rowsToAdd.length);
 
   if (rowsToAdd.length === 0) {
-    console.info('✅ 追加データなし');
+    addLog('追加不要', '既存と重複なし');
     return;
   }
 
-  console.log('📥 スプレッドシート書き込み開始');
+  addLog('スプレッドシート書き込み開始', '');
+
   await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${sheetName}!A1`,
@@ -169,25 +211,31 @@ async function writeToSheet(sortedRows) {
       ]),
     },
   });
-  console.info('✅ スプレッドシート書き込み成功');
+
+  addLog('スプレッドシート書き込み完了', '');
 }
 
 app.get('/unazuki', async (req, res) => {
   try {
+    explorationLogs = []; // ログ初期化
     const sortedRows = await fetchData();
-    console.info('📥 fetchData完了、rows件数:', sortedRows.length);
-
     if (sortedRows.length === 0) {
       res.send('❌ データなし');
       return;
     }
-
     await writeToSheet(sortedRows);
     res.send('✅ 保存完了！');
   } catch (error) {
+    addLog('サーバーエラー', error.message, null, 'error');
     console.error('❌ サーバーエラー:', error.message);
     res.status(500).send('❌ サーバーエラー');
   }
+});
+
+// 🔥 追加: /getlogで全ログ参照可能
+app.get('/getlog', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(JSON.stringify(explorationLogs, null, 2));
 });
 
 app.get('/health', (req, res) => {
