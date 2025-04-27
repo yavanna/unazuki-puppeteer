@@ -41,10 +41,7 @@ async function fetchData() {
   addLog('Puppeteer起動', 'ブラウザセッション開始');
 
   const browser = await puppeteer.launch({
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox'
-    ]
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
   const page = await browser.newPage();
   const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
@@ -82,7 +79,7 @@ async function fetchData() {
   addLog('スクロール開始', '行数監視しながらスクロール');
 
   let previousRowCount = 0;
-  for (let i = 0; i < 10; i++) { // 最大10回スクロール
+  for (let i = 0; i < 10; i++) {
     const currentRowCount = await page.evaluate(() => {
       const table = document.querySelector('table tbody');
       return table ? table.querySelectorAll('tr').length : 0;
@@ -118,8 +115,7 @@ async function fetchData() {
     for (const row of rows) {
       const cells = Array.from(row.querySelectorAll('td')).map(cell => cell.innerText.trim());
       result.push({
-        isValid: cells.length >= 2 && cells[0] && cells[1], // 日付・時刻が入っていれば有効
-        date: cells[0] || '',
+        rawDate: cells[0] || '',
         time: cells[1] || '',
         waterLevel: cells[2] || '',
         waterStorage: cells[3] || '',
@@ -146,13 +142,22 @@ async function fetchData() {
   addLog('テーブルデータ取得完了', `取得行数: ${tableData.rows.length}`, tableData.rows.slice(0, 5));
   addLog('テーブルHTMLダンプ', 'HTMLダンプ取得', tableData.tableHTML ? tableData.tableHTML.slice(0, 1000) : 'なし');
 
+  // 🔥 日付引き継ぎ処理
+  let lastDate = '';
   const nowYear = new Date().getFullYear();
-  const validRows = tableData.rows
-    .filter(row => row.isValid)
-    .map(row => ({
-      datetime: `${nowYear}/${row.date} ${row.time}`,
-      ...row
-    }));
+  const validRows = [];
+
+  for (const row of tableData.rows) {
+    if (row.rawDate) {
+      lastDate = row.rawDate;
+    }
+    if (lastDate && row.time) {
+      validRows.push({
+        datetime: `${nowYear}/${lastDate} ${row.time}`,
+        ...row
+      });
+    }
+  }
 
   addLog('年付与＋整形完了', `有効データ行数: ${validRows.length}`);
 
