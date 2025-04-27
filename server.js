@@ -9,7 +9,7 @@ const port = process.env.PORT || 3000;
 const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
 const privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-const sheetName = 'FlowData'; // シート名（FlowData）
+const sheetName = 'FlowData'; // シート名
 
 function getFetchTime() {
   const now = new Date();
@@ -25,12 +25,10 @@ function getFetchTime() {
 
 async function fetchData() {
   const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    executablePath: '/usr/bin/google-chrome'
+    args: ['--no-sandbox', '--disable-setuid-sandbox'] // ★ executablePathなし
   });
   const page = await browser.newPage();
-  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6'; // ★宇奈月ダム専用URLに固定！
+  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6'; // ★宇奈月ダム専用URLに変更！
 
   console.log('🌐 ページ遷移:', url);
   await page.goto(url, { waitUntil: 'networkidle0' });
@@ -133,6 +131,11 @@ app.get('/unazuki', async (req, res) => {
     console.error('❌ エラー:', error.message);
     res.status(500).send('❌ サーバーエラー');
   }
+});
+
+// /health エンドポイント（復活！）
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
 });
 
 // / ルート
