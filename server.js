@@ -1,4 +1,4 @@
-// server.js（観測値一覧から過去20件取得版）
+// server.js（tbody.innerText版・観測値一覧 正式対応）
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
@@ -37,46 +37,42 @@ async function fetchData() {
 
   const rows = await page.evaluate((year) => {
     const data = [];
-    const tableRows = document.querySelectorAll('table tbody tr');
+    const tbodyText = document.querySelector('table tbody').innerText;
+    const lines = tbodyText.split('\n');
     let lastDate = null;
 
-    for (const row of tableRows) {
-      const cells = row.querySelectorAll('td');
-      const date = cells[0]?.innerText.trim();
-      const time = cells[1]?.innerText.trim();
-      const waterLevel = cells[2]?.innerText.trim();
-      const waterStorage = cells[3]?.innerText.trim();
-      const irrigationRate = cells[4]?.innerText.trim();
-      const effectiveRate = cells[5]?.innerText.trim();
-      const floodRate = cells[6]?.innerText.trim();
-      const inflow = cells[7]?.innerText.trim();
-      const outflow = cells[8]?.innerText.trim();
-      const rain10min = cells[9]?.innerText.trim();
-      const rainAccum = cells[10]?.innerText.trim();
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 11) continue;
 
-      if (date) {
+      let [date, time, waterLevel, waterStorage, irrigationRate, effectiveRate, floodRate, inflow, outflow, rain10min, rainAccum] = parts;
+
+      if (date.includes('/')) {
         lastDate = date;
+      } else {
+        time = date;
+        date = lastDate;
       }
 
-      if (time && waterLevel && inflow && outflow) {
-        const fullDateTime = new Date(`${year}/${lastDate} ${time}`);
-        fullDateTime.setHours(fullDateTime.getHours() + 9);
+      if (!date || !time) continue;
 
-        const formattedDateTime = `${fullDateTime.getFullYear()}/${String(fullDateTime.getMonth() + 1).padStart(2, '0')}/${String(fullDateTime.getDate()).padStart(2, '0')} ${String(fullDateTime.getHours()).padStart(2, '0')}:${String(fullDateTime.getMinutes()).padStart(2, '0')}`;
+      const fullDateTime = new Date(`${year}/${date} ${time}`);
+      fullDateTime.setHours(fullDateTime.getHours() + 9);
 
-        data.push({
-          datetime: formattedDateTime,
-          waterLevel,
-          waterStorage,
-          irrigationRate,
-          effectiveRate,
-          floodRate,
-          inflow,
-          outflow,
-          rain10min,
-          rainAccum
-        });
-      }
+      const formattedDateTime = `${fullDateTime.getFullYear()}/${String(fullDateTime.getMonth() + 1).padStart(2, '0')}/${String(fullDateTime.getDate()).padStart(2, '0')} ${String(fullDateTime.getHours()).padStart(2, '0')}:${String(fullDateTime.getMinutes()).padStart(2, '0')}`;
+
+      data.push({
+        datetime: formattedDateTime,
+        waterLevel,
+        waterStorage,
+        irrigationRate,
+        effectiveRate,
+        floodRate,
+        inflow,
+        outflow,
+        rain10min,
+        rainAccum
+      });
     }
     return data.slice(0, 20); // 最新20件だけ取得
   }, year);
