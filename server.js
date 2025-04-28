@@ -6,7 +6,7 @@ const port = process.env.PORT || 3000;
 
 // Google Sheets設定
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = 'FlowData';  // ←ここを FlowData に固定！
+const SHEET_NAME = 'FlowData';  // シート名は固定でFlowData！
 
 // ログ用
 const logs = [];
@@ -20,9 +20,9 @@ function addLog(step, detail = '', dump = null, level = 'info') {
 // Google Sheets APIクライアント作成
 async function getSheetsClient() {
   const auth = new google.auth.JWT(
-    process.env.GOOGLE_CLIENT_EMAIL,
+    process.env.GOOGLE_CLIENT_EMAIL,   // ✅ Railwayにあるもともとの環境変数名
     null,
-    (process.env.GOOGLE_SHEET_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),   // ✅ ここも同じく
     ['https://www.googleapis.com/auth/spreadsheets']
   );
   const sheets = google.sheets({ version: 'v4', auth });
