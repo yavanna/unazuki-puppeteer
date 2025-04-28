@@ -1,61 +1,3 @@
-const express = require('express');
-const puppeteer = require('puppeteer');
-const { google } = require('googleapis');
-const app = express();
-const port = process.env.PORT || 3000;
-
-// Google Sheets設定
-const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = 'FlowData';  // 固定
-
-// ログ用
-const logs = [];
-let browser;
-
-function addLog(step, detail = '', dump = null, level = 'info') {
-  logs.push({ timestamp: new Date().toISOString(), step, detail, dump, level });
-  if (logs.length > 500) logs.shift();
-}
-
-// Google Sheets APIクライアント作成
-async function getSheetsClient() {
-  const auth = new google.auth.JWT(
-    process.env.GOOGLE_CLIENT_EMAIL,
-    null,
-    (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    ['https://www.googleapis.com/auth/spreadsheets']
-  );
-  const sheets = google.sheets({ version: 'v4', auth });
-  return sheets;
-}
-
-// Puppeteer起動（リトライ付き）
-async function launchBrowserWithRetry(maxRetries = 3, waitMs = 5000) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      addLog('Puppeteer起動', `試行${attempt}回目`);
-      browser = await puppeteer.launch({
-        headless: "new",
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-zygote',
-          '--single-process'
-        ]
-      });
-      addLog('Puppeteer起動成功');
-      return;
-    } catch (e) {
-      addLog('Puppeteer起動失敗', e.message, null, 'error');
-      if (attempt === maxRetries) throw e;
-      await new Promise(resolve => setTimeout(resolve, waitMs));
-    }
-  }
-}
-
-// Unazukiダム観測データ取得（tbodyから正しく読む版）
 async function fetchUnazukiData() {
   if (!browser) await launchBrowserWithRetry();
 
@@ -75,34 +17,64 @@ async function fetchUnazukiData() {
 
     addLog('データ取得成功', `行数: ${rawData.length}`);
 
-    let currentDate = null;
+    let currentDateText = null;
     const year = new Date().getFullYear();
+
+    const excelDateToString = (serial) => {
+      const epoch = new Date(1899, 11, 30); // Excelの起点日
+      const days = Number(serial);
+      const date = new Date(epoch.getTime() + days * 86400000);
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const day = date.getDate().toString().padStart(2, '0');
+      return `${month}/${day}`; // MM/DD形式
+    };
 
     const parsedData = rawData
       .map(cols => {
-        if (cols.length < 11) return null;  // 必要な列がない場合スキップ
+        if (cols.length < 11) return null;  // 必須列なければスキップ
 
-        let [date, time, waterLevel, , , , , inflow, outflow, rain10min, rainTotal] = cols;
+        let [dateRaw, time, waterLevel, storageVolume, utilCapacity, effCapacity, floodCapacity, inflow, outflow, rain10min, rainTotal] = cols;
 
-        if (date) {
-          currentDate = date;
-        } else {
-          date = currentDate;
+        if (dateRaw) {
+          // 日付が数値ならExcelシリアルとみなして変換
+          if (!isNaN(dateRaw) && !dateRaw.includes('/')) {
+            currentDateText = excelDateToString(dateRaw);
+          } else {
+            currentDateText = dateRaw;
+          }
         }
+        // 日付が空の場合、前回のを引き継ぐ
+        const date = currentDateText;
 
         if (!date || !time) return null;
 
-        const obsDateTimeStr = `${year}/${date} ${time}`;
+        // 24:00:00を00:00に直す（特別処理）
+        let timeFixed = time;
+        if (time.startsWith('24:')) {
+          timeFixed = '00:' + time.split(':')[1];
+          // 日付を1日進める（正確にやるなら）
+          const dateParts = date.split('/');
+          const fakeDate = new Date(`${year}/${dateParts[0]}/${dateParts[1]} 00:00`);
+          fakeDate.setDate(fakeDate.getDate() + 1);
+          const month = (fakeDate.getMonth() + 1).toString().padStart(2, '0');
+          const day = fakeDate.getDate().toString().padStart(2, '0');
+          date = `${month}/${day}`;
+        }
+
+        // 観測日時作成
+        const obsDateTimeStr = `${year}/${date} ${timeFixed}`;
         const obsDate = new Date(obsDateTimeStr);
+
         if (isNaN(obsDate)) return null;
 
         return {
           obsDateTime: obsDate,
-          row: [date, time, waterLevel, inflow, outflow, rain10min, rainTotal]
+          row: [date, timeFixed, waterLevel, storageVolume, utilCapacity, effCapacity, inflow, outflow, rain10min, rainTotal]
         };
       })
       .filter(x => x !== null);
 
+    // 観測日時で昇順ソート
     parsedData.sort((a, b) => a.obsDateTime - b.obsDateTime);
 
     return parsedData.map(x => x.row);
@@ -110,56 +82,3 @@ async function fetchUnazukiData() {
     await page.close();
   }
 }
-
-// スプレッドシートに書き込み
-async function writeToSheet(dataRows) {
-  const sheets = await getSheetsClient();
-  const now = new Date().toISOString(); // 取得時刻
-
-  const values = dataRows.map(row => [
-    now,
-    ...row
-  ]);
-
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A1`,
-    valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
-    resource: { values }
-  });
-
-  addLog('スプレッドシート書き込み成功', `行数: ${values.length}`);
-}
-
-// /health エンドポイント
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: "ok", browserAlive: !!browser, timestamp: new Date().toISOString() });
-});
-
-// /unazuki エンドポイント
-app.get('/unazuki', async (req, res) => {
-  try {
-    const data = await fetchUnazukiData();
-    await writeToSheet(data);
-    res.status(200).json({ success: true, rows: data.length });
-  } catch (e) {
-    addLog('unazukiエラー', e.message, null, 'error');
-    res.status(500).json({ success: false, message: e.message });
-  }
-});
-
-// /getlog エンドポイント
-app.get('/getlog', (req, res) => {
-  res.status(200).json(logs);
-});
-
-// サーバー起動
-app.listen(port, async () => {
-  addLog('サーバー起動', `ポート: ${port}`);
-  try {
-    await launchBrowserWithRetry();
-  } catch (e) {
-    addLog('初回起動失敗', e.message, null, 'error');
-  }
-});
