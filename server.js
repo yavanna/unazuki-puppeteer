@@ -20,7 +20,7 @@ function addLog(step, detail = '', dump = null, level = 'info') {
 // Google Sheets APIクライアント作成
 async function getSheetsClient() {
   const auth = new google.auth.JWT(
-    process.env.GOOGLE_SHEET_CLIENT_EMAIL,
+    process.env.GOOGLE_CLIENT_EMAIL,
     null,
     (process.env.GOOGLE_SHEET_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     ['https://www.googleapis.com/auth/spreadsheets']
