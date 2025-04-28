@@ -21,7 +21,7 @@ async function fetchUnazukiData() {
     const year = new Date().getFullYear();
 
     const excelDateToString = (serial) => {
-      const epoch = new Date(1899, 11, 30); // Excelの起点日
+      const epoch = new Date(1899, 11, 30); // Excel起点日
       const days = Number(serial);
       const date = new Date(epoch.getTime() + days * 86400000);
       const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -31,53 +31,80 @@ async function fetchUnazukiData() {
 
     const parsedData = rawData
       .map(cols => {
-        if (cols.length < 11) return null;  // 必須列なければスキップ
+        try {
+          if (cols.length < 11) return null; // 必須列なければスキップ
 
-        let [dateRaw, time, waterLevel, storageVolume, utilCapacity, effCapacity, floodCapacity, inflow, outflow, rain10min, rainTotal] = cols;
+          const dateRaw = cols[0];
+          const timeRaw = cols[1];
+          const waterLevel = cols[2];
+          const storageVolume = cols[3];
+          const utilCapacity = cols[4];
+          const effCapacity = cols[5];
+          const floodCapacity = cols[6];
+          const inflow = cols[7];
+          const outflow = cols[8];
+          const rain10min = cols[9];
+          const rainTotal = cols[10];
 
-        if (dateRaw) {
-          // 日付が数値ならExcelシリアルとみなして変換
-          if (!isNaN(dateRaw) && !dateRaw.includes('/')) {
-            currentDateText = excelDateToString(dateRaw);
-          } else {
-            currentDateText = dateRaw;
+          // 日付補正
+          let dateFixed = currentDateText;
+          if (dateRaw) {
+            if (!isNaN(dateRaw) && !dateRaw.includes('/')) {
+              dateFixed = excelDateToString(dateRaw);
+            } else {
+              dateFixed = dateRaw;
+            }
+            currentDateText = dateFixed; // 現在日付更新
           }
+
+          if (!dateFixed || !timeRaw) return null;
+
+          // 時刻補正
+          let timeFixed = timeRaw;
+          let dateFixedForObs = dateFixed;
+          if (timeRaw.startsWith('24:')) {
+            timeFixed = '00:' + timeRaw.split(':')[1];
+            const dateParts = dateFixed.split('/');
+            const tempDate = new Date(`${year}/${dateParts[0]}/${dateParts[1]} 00:00`);
+            tempDate.setDate(tempDate.getDate() + 1);
+            const month = (tempDate.getMonth() + 1).toString().padStart(2, '0');
+            const day = tempDate.getDate().toString().padStart(2, '0');
+            dateFixedForObs = `${month}/${day}`;
+          }
+
+          // 観測日時作成
+          const obsDateTimeStr = `${year}/${dateFixedForObs} ${timeFixed}`;
+          const obsDate = new Date(obsDateTimeStr);
+          if (isNaN(obsDate)) return null;
+
+          return {
+            obsDateTime: obsDate,
+            row: [
+              dateFixedForObs,
+              timeFixed,
+              waterLevel,
+              storageVolume,
+              utilCapacity,
+              effCapacity,
+              inflow,
+              outflow,
+              rain10min,
+              rainTotal
+            ]
+          };
+        } catch (error) {
+          console.error('データパースエラー:', error);
+          return null;
         }
-        // 日付が空の場合、前回のを引き継ぐ
-        const date = currentDateText;
-
-        if (!date || !time) return null;
-
-        // 24:00:00を00:00に直す（特別処理）
-        let timeFixed = time;
-        if (time.startsWith('24:')) {
-          timeFixed = '00:' + time.split(':')[1];
-          // 日付を1日進める（正確にやるなら）
-          const dateParts = date.split('/');
-          const fakeDate = new Date(`${year}/${dateParts[0]}/${dateParts[1]} 00:00`);
-          fakeDate.setDate(fakeDate.getDate() + 1);
-          const month = (fakeDate.getMonth() + 1).toString().padStart(2, '0');
-          const day = fakeDate.getDate().toString().padStart(2, '0');
-          date = `${month}/${day}`;
-        }
-
-        // 観測日時作成
-        const obsDateTimeStr = `${year}/${date} ${timeFixed}`;
-        const obsDate = new Date(obsDateTimeStr);
-
-        if (isNaN(obsDate)) return null;
-
-        return {
-          obsDateTime: obsDate,
-          row: [date, timeFixed, waterLevel, storageVolume, utilCapacity, effCapacity, inflow, outflow, rain10min, rainTotal]
-        };
       })
       .filter(x => x !== null);
 
-    // 観測日時で昇順ソート
     parsedData.sort((a, b) => a.obsDateTime - b.obsDateTime);
 
     return parsedData.map(x => x.row);
+  } catch (e) {
+    console.error('fetchUnazukiDataエラー:', e);
+    throw e;
   } finally {
     await page.close();
   }
