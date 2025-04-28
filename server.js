@@ -1,122 +1,110 @@
-async function fetchData() {
-  addLog('Puppeteer起動', 'ブラウザセッション開始');
+const express = require('express');
+const puppeteer = require('puppeteer');
+const app = express();
+const port = process.env.PORT || 3000;
 
-  const browser = await puppeteer.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-  const page = await browser.newPage();
+// Puppeteerブラウザインスタンス
+let browser;
 
-  await page.setCacheEnabled(false);
-  await page.emulateTimezone('Asia/Tokyo');
-  addLog('キャッシュ無効化＋タイムゾーン設定', 'page.setCacheEnabled(false) & Asia/Tokyo');
+// 最新取得データ
+let latestData = null;
 
-  const url = 'https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6';
-  addLog('ページアクセス', url);
-  await page.goto(url, { waitUntil: 'networkidle0' });
-  addLog('ページロード完了', '');
+// グローバルエラーハンドリング
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🚨 Unhandled Rejection:', reason);
+});
 
-  let isContentCached = false;
-  page.on('console', msg => {
-    if (msg.text().includes('Content has been cached for offline use')) {
-      isContentCached = true;
-      addLog('更新完了サイン検知', 'Content cached detected');
-    }
-  });
+process.on('uncaughtException', (error) => {
+  console.error('🚨 Uncaught Exception:', error.stack || error);
+});
 
-  const timeout = Date.now() + 10000;
-  while (!isContentCached && Date.now() < timeout) {
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-
-  if (!isContentCached) {
-    addLog('更新完了サイン検知失敗', 'タイムアウト到達', null, 'warning');
-  }
-
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  addLog('スクロール開始', '行数監視しながらスクロール');
-
-  let previousRowCount = 0;
-  for (let i = 0; i < 10; i++) {
-    const currentRowCount = await page.evaluate(() => {
-      const table = document.querySelector('table tbody');
-      return table ? table.querySelectorAll('tr').length : 0;
-    });
-
-    addLog('スクロールチェック', `回数${i + 1}: 前回${previousRowCount}件 → 今回${currentRowCount}件`);
-
-    if (currentRowCount <= previousRowCount) {
-      addLog('スクロール停止', '行数増加なし → 停止');
-      break;
-    }
-
-    previousRowCount = currentRowCount;
-
-    await page.evaluate(() => {
-      window.scrollBy(0, window.innerHeight);
-    });
-
-    addLog('スクロール操作', '1画面分スクロール実施');
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }
-
-  addLog('テーブル読み取り開始', '');
-
-  const tableData = await page.evaluate(() => {
-    const result = [];
-    const table = document.querySelector('table tbody');
-    if (!table) return [];
-
-    const rows = Array.from(table.querySelectorAll('tr'));
-    for (const row of rows) {
-      const cells = Array.from(row.querySelectorAll('td')).map(cell => cell.innerText.trim());
-      result.push({
-        rawDate: cells[0] || '',
-        time: cells[1] || '',
-        waterLevel: cells[2] || '',
-        waterStorage: cells[3] || '',
-        irrigationRate: cells[4] || '',
-        effectiveRate: cells[5] || '',
-        floodRate: cells[6] || '',
-        inflow: cells[7] || '',
-        outflow: cells[8] || '',
-        rain10min: cells[9] || '',
-        rainAccum: cells[10] || ''
+// Puppeteer起動リトライ付き関数
+async function launchBrowserWithRetry(maxRetries = 3, waitMs = 5000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🛫 Puppeteerブラウザ起動 試行${attempt}回目`);
+      browser = await puppeteer.launch({
+        headless: "new",
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-zygote',
+          '--single-process'
+        ]
       });
-    }
-    return result;
-  });
-
-  await browser.close();
-  addLog('ブラウザ終了', 'Puppeteerセッション正常終了');
-
-  if (tableData.length === 0) {
-    addLog('テーブルエラー', 'テーブルデータが空でした', null, 'error');
-    throw new Error('テーブルデータが空でした');
-  }
-
-  let lastDate = '';
-  const nowYear = new Date().getFullYear();
-  const validRows = [];
-
-  for (const row of tableData) {
-    if (row.rawDate) {
-      lastDate = row.rawDate;
-    }
-    if (lastDate && row.time) {
-      validRows.push({
-        datetime: `${nowYear}/${lastDate} ${row.time}`,
-        ...row
-      });
+      console.log('✅ Puppeteerブラウザ起動成功');
+      return;
+    } catch (e) {
+      console.error(`⚡ Puppeteer起動失敗（${attempt}回目）: ${e.stack || e.message}`);
+      if (attempt === maxRetries) {
+        console.error('❌ 最大リトライ回数に達しました。起動を諦めます。');
+        throw e;
+      }
+      await new Promise(resolve => setTimeout(resolve, waitMs));
     }
   }
-
-  // 🌟 ここで並び替え（古い順）
-  const sortedRows = validRows.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
-  addLog('古い順に整列完了', `データ数: ${sortedRows.length}`);
-
-  // 🌟 並び順をダンプ出力
-  addLog('並び替え後データ確認', '', sortedRows.map(row => row.datetime));
-
-  return sortedRows;
 }
+
+// 宇奈月ダムデータ取得関数
+async function fetchUnazukiData() {
+  if (!browser) {
+    console.log('♻️ ブラウザインスタンス未検出、再起動します。');
+    await launchBrowserWithRetry();
+  }
+
+  const page = await browser.newPage();
+  try {
+    await page.setCacheEnabled(true); // キャッシュ活用
+    console.log('🌐 宇奈月ダムページアクセス開始');
+    await page.goto('https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6', { timeout: 30000, waitUntil: 'domcontentloaded' });
+
+    const tableData = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('table tr'));
+      return rows.map(row => {
+        const cols = row.querySelectorAll('td');
+        return Array.from(cols).map(col => col.innerText.trim());
+      }).filter(row => row.length > 0);
+    });
+
+    console.log('✅ データ取得成功！取得行数:', tableData.length);
+    latestData = tableData;
+    return tableData;
+  } catch (error) {
+    console.error('⚡ fetchUnazukiData失敗:', error.stack || error.message);
+    throw error;
+  } finally {
+    await page.close();
+  }
+}
+
+// /health → サーバー生存確認＋ブラウザ生存確認
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    browserAlive: !!browser,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// /unazuki → データ取得エンドポイント
+app.get('/unazuki', async (req, res) => {
+  try {
+    const data = await fetchUnazukiData();
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error('❌ /unazukiエラー:', error.stack || error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// サーバー起動
+app.listen(port, async () => {
+  console.log(`🚀 サーバー起動完了 ポート:${port}`);
+  try {
+    await launchBrowserWithRetry();
+  } catch (e) {
+    console.error('❌ 初回ブラウザ起動失敗。サーバー自体は生存中。');
+  }
+});
