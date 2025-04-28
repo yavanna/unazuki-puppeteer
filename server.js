@@ -6,7 +6,7 @@ const port = process.env.PORT || 3000;
 
 // Google Sheets設定
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = 'FlowData';  // 固定でFlowData！
+const SHEET_NAME = 'FlowData';  // 固定
 
 // ログ用
 const logs = [];
@@ -55,7 +55,7 @@ async function launchBrowserWithRetry(maxRetries = 3, waitMs = 5000) {
   }
 }
 
-// Unazukiダム観測データ取得（tbodyから読む）
+// Unazukiダム観測データ取得（tbodyから正しく読む版）
 async function fetchUnazukiData() {
   if (!browser) await launchBrowserWithRetry();
 
@@ -80,9 +80,9 @@ async function fetchUnazukiData() {
 
     const parsedData = rawData
       .map(cols => {
-        if (cols.length < 8) return null;
+        if (cols.length < 11) return null;  // 必要な列がない場合スキップ
 
-        let [date, time, waterLevel, reservoirVolume, utilCapacity, effCapacity, floodCapacity, inflow, outflow, rain10min, rainTotal] = cols;
+        let [date, time, waterLevel, , , , , inflow, outflow, rain10min, rainTotal] = cols;
 
         if (date) {
           currentDate = date;
@@ -94,20 +94,18 @@ async function fetchUnazukiData() {
 
         const obsDateTimeStr = `${year}/${date} ${time}`;
         const obsDate = new Date(obsDateTimeStr);
-
         if (isNaN(obsDate)) return null;
 
         return {
           obsDateTime: obsDate,
-          dataRow: [date, time, waterLevel, inflow, outflow, rain10min, rainTotal]
+          row: [date, time, waterLevel, inflow, outflow, rain10min, rainTotal]
         };
       })
       .filter(x => x !== null);
 
-    // 観測日時で昇順（古い順）ソート
     parsedData.sort((a, b) => a.obsDateTime - b.obsDateTime);
 
-    return parsedData.map(x => x.dataRow);
+    return parsedData.map(x => x.row);
   } finally {
     await page.close();
   }
@@ -116,7 +114,7 @@ async function fetchUnazukiData() {
 // スプレッドシートに書き込み
 async function writeToSheet(dataRows) {
   const sheets = await getSheetsClient();
-  const now = new Date().toISOString(); // 取得時刻（ISO形式）
+  const now = new Date().toISOString(); // 取得時刻
 
   const values = dataRows.map(row => [
     now,
