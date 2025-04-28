@@ -1,15 +1,12 @@
-// 最終版 server.js - スプレッドシート書き込み付き！
-
 const express = require('express');
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Google Sheets API設定
-const SHEET_ID = 'ここにスプレッドシートIDを入力';
-const SHEET_NAME = 'ここにシート名を入力';
-const GOOGLE_CREDENTIALS = require('./credentials.json');
+// Google Sheets設定
+const SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const SHEET_NAME = 'FlowData';  // ←ここを FlowData に固定！
 
 // ログ用
 const logs = [];
@@ -22,22 +19,31 @@ function addLog(step, detail = '', dump = null, level = 'info') {
 
 // Google Sheets APIクライアント作成
 async function getSheetsClient() {
-  const auth = new google.auth.GoogleAuth({
-    credentials: GOOGLE_CREDENTIALS,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets']
-  });
-  const client = await auth.getClient();
-  const sheets = google.sheets({ version: 'v4', auth: client });
+  const auth = new google.auth.JWT(
+    process.env.GOOGLE_SHEET_CLIENT_EMAIL,
+    null,
+    (process.env.GOOGLE_SHEET_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    ['https://www.googleapis.com/auth/spreadsheets']
+  );
+  const sheets = google.sheets({ version: 'v4', auth });
   return sheets;
 }
 
+// Puppeteer起動（リトライ付き）
 async function launchBrowserWithRetry(maxRetries = 3, waitMs = 5000) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       addLog('Puppeteer起動', `試行${attempt}回目`);
       browser = await puppeteer.launch({
         headless: "new",
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process']
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-zygote',
+          '--single-process'
+        ]
       });
       addLog('Puppeteer起動成功');
       return;
@@ -49,13 +55,17 @@ async function launchBrowserWithRetry(maxRetries = 3, waitMs = 5000) {
   }
 }
 
+// Unazukiダムのデータ取得
 async function fetchUnazukiData() {
   if (!browser) await launchBrowserWithRetry();
 
   const page = await browser.newPage();
   try {
     await page.setCacheEnabled(true);
-    await page.goto('https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6', { timeout: 60000, waitUntil: 'networkidle2' });
+    await page.goto('https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6', {
+      timeout: 60000,
+      waitUntil: 'networkidle2'
+    });
     await page.waitForSelector('table', { timeout: 10000 });
 
     const tableData = await page.evaluate(() => {
@@ -70,6 +80,7 @@ async function fetchUnazukiData() {
   }
 }
 
+// データをスプレッドシートに追記
 async function writeToSheet(dataRows) {
   const sheets = await getSheetsClient();
   const values = dataRows.map(row => [
@@ -84,13 +95,16 @@ async function writeToSheet(dataRows) {
     insertDataOption: 'INSERT_ROWS',
     resource: { values }
   });
+
   addLog('スプレッドシート書き込み成功', `行数: ${values.length}`);
 }
 
+// /health エンドポイント
 app.get('/health', (req, res) => {
   res.status(200).json({ status: "ok", browserAlive: !!browser, timestamp: new Date().toISOString() });
 });
 
+// /unazuki エンドポイント
 app.get('/unazuki', async (req, res) => {
   try {
     const data = await fetchUnazukiData();
@@ -102,10 +116,12 @@ app.get('/unazuki', async (req, res) => {
   }
 });
 
+// /getlog エンドポイント
 app.get('/getlog', (req, res) => {
   res.status(200).json(logs);
 });
 
+// サーバー起動
 app.listen(port, async () => {
   addLog('サーバー起動', `ポート: ${port}`);
   try {
