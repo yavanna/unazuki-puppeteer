@@ -6,7 +6,7 @@ const port = process.env.PORT || 3000;
 
 // Google Sheets設定
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = 'FlowData';  // シート名は固定でFlowData！
+const SHEET_NAME = 'FlowData';  // 固定でFlowData！
 
 // ログ用
 const logs = [];
@@ -20,9 +20,9 @@ function addLog(step, detail = '', dump = null, level = 'info') {
 // Google Sheets APIクライアント作成
 async function getSheetsClient() {
   const auth = new google.auth.JWT(
-    process.env.GOOGLE_CLIENT_EMAIL,   // ✅ Railwayにあるもともとの環境変数名
+    process.env.GOOGLE_CLIENT_EMAIL,
     null,
-    (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),   // ✅ ここも同じく
+    (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     ['https://www.googleapis.com/auth/spreadsheets']
   );
   const sheets = google.sheets({ version: 'v4', auth });
@@ -55,7 +55,7 @@ async function launchBrowserWithRetry(maxRetries = 3, waitMs = 5000) {
   }
 }
 
-// Unazukiダムのデータ取得
+// Unazukiダム観測データ取得（tbodyから読む）
 async function fetchUnazukiData() {
   if (!browser) await launchBrowserWithRetry();
 
@@ -68,23 +68,58 @@ async function fetchUnazukiData() {
     });
     await page.waitForSelector('table', { timeout: 10000 });
 
-    const tableData = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table tr'));
-      return rows.map(row => Array.from(row.querySelectorAll('td')).map(col => col.innerText.trim())).filter(r => r.length > 0);
+    const rawData = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('table tbody tr'));
+      return rows.map(row => Array.from(row.querySelectorAll('td')).map(col => col.innerText.trim()));
     });
 
-    addLog('データ取得成功', `行数: ${tableData.length}`);
-    return tableData;
+    addLog('データ取得成功', `行数: ${rawData.length}`);
+
+    let currentDate = null;
+    const year = new Date().getFullYear();
+
+    const parsedData = rawData
+      .map(cols => {
+        if (cols.length < 8) return null;
+
+        let [date, time, waterLevel, reservoirVolume, utilCapacity, effCapacity, floodCapacity, inflow, outflow, rain10min, rainTotal] = cols;
+
+        if (date) {
+          currentDate = date;
+        } else {
+          date = currentDate;
+        }
+
+        if (!date || !time) return null;
+
+        const obsDateTimeStr = `${year}/${date} ${time}`;
+        const obsDate = new Date(obsDateTimeStr);
+
+        if (isNaN(obsDate)) return null;
+
+        return {
+          obsDateTime: obsDate,
+          dataRow: [date, time, waterLevel, inflow, outflow, rain10min, rainTotal]
+        };
+      })
+      .filter(x => x !== null);
+
+    // 観測日時で昇順（古い順）ソート
+    parsedData.sort((a, b) => a.obsDateTime - b.obsDateTime);
+
+    return parsedData.map(x => x.dataRow);
   } finally {
     await page.close();
   }
 }
 
-// データをスプレッドシートに追記
+// スプレッドシートに書き込み
 async function writeToSheet(dataRows) {
   const sheets = await getSheetsClient();
+  const now = new Date().toISOString(); // 取得時刻（ISO形式）
+
   const values = dataRows.map(row => [
-    new Date().toISOString(),
+    now,
     ...row
   ]);
 
