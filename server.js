@@ -1,4 +1,4 @@
-// 最終版 server.js（観測値一覧テーブル限定で取得する版）
+// server.js - ページ上のすべてのテーブル内容を確認するログ付きデバッグ版
 
 const express = require('express');
 const puppeteer = require('puppeteer');
@@ -49,6 +49,7 @@ async function fetchUnazukiData() {
   if (!browser) await launchBrowserWithRetry();
   const page = await browser.newPage();
   try {
+    await page.setCacheEnabled(false);
     await page.goto('https://www.river.go.jp/kawabou/pcfull/tm?kbn=2&itmkndCd=7&ofcCd=21556&obsCd=6', {
       timeout: 60000,
       waitUntil: 'networkidle2'
@@ -57,66 +58,25 @@ async function fetchUnazukiData() {
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.waitForTimeout(5000);
 
-    const rawData = await page.evaluate(() => {
-      const tables = Array.from(document.querySelectorAll('table'));
-      const targetTable = tables.find(tbl => tbl.innerText.includes('貯水率利水容量'));
-      if (!targetTable) return [];
-      const rows = Array.from(targetTable.querySelectorAll('tbody tr'));
-      return rows.map(row => Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim()));
+    const tables = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('table')).map((table, index) => {
+        const caption = table.querySelector('caption')?.innerText || `テーブル${index}`;
+        const head = Array.from(table.querySelectorAll('thead tr')).map(tr => Array.from(tr.querySelectorAll('th')).map(th => th.innerText));
+        const rows = Array.from(table.querySelectorAll('tbody tr')).map(row =>
+          Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim())
+        );
+        return { caption, head, rows };
+      });
     });
 
-    addLog('データ取得成功', `行数: ${rawData.length}`);
+    addLog('テーブル総数', `count: ${tables.length}`);
+    tables.slice(0, 5).forEach((tbl, i) => {
+      addLog(`テーブル${i} caption`, tbl.caption);
+      addLog(`テーブル${i} ヘッダ`, '', tbl.head);
+      addLog(`テーブル${i} 先頭行`, '', tbl.rows[0]);
+    });
 
-    for (let i = 0; i < Math.min(5, rawData.length); i++) {
-      addLog(`取得行${i}`, '', rawData[i]);
-    }
-
-    let currentDate = null;
-    const year = new Date().getFullYear();
-    const excelDateToString = (serial) => {
-      const epoch = new Date(1899, 11, 30);
-      const date = new Date(epoch.getTime() + Number(serial) * 86400000);
-      return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
-    };
-
-    const parsed = rawData
-      .map(cols => {
-        try {
-          if (cols.length < 11) return null;
-          const [dateRaw, timeRaw, wl, sv, ul, el, , inF, outF, rain10, rainSum] = cols;
-
-          let date = currentDate;
-          if (dateRaw) {
-            date = (!isNaN(dateRaw) && !dateRaw.includes('/')) ? excelDateToString(dateRaw) : dateRaw;
-            currentDate = date;
-          }
-
-          if (!date || !timeRaw) return null;
-
-          let dateForObs = date;
-          let time = timeRaw;
-          if (timeRaw.startsWith('24:')) {
-            time = '00:' + timeRaw.split(':')[1];
-            const tmp = new Date(`${year}/${date} 00:00`);
-            tmp.setDate(tmp.getDate() + 1);
-            dateForObs = `${String(tmp.getMonth() + 1).padStart(2, '0')}/${String(tmp.getDate()).padStart(2, '0')}`;
-          }
-
-          const obsDate = new Date(`${year}/${dateForObs} ${time}`);
-          if (isNaN(obsDate)) return null;
-
-          return {
-            obsDateTime: obsDate,
-            row: [`${year}-${dateForObs} ${time}`, wl, sv, ul, el, '--', inF, outF, rain10, rainSum]
-          };
-        } catch {
-          return null;
-        }
-      })
-      .filter(r => r);
-
-    parsed.sort((a, b) => a.obsDateTime - b.obsDateTime);
-    return parsed.map(x => x.row);
+    return [];
   } finally {
     await page.close();
   }
