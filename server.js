@@ -1,4 +1,4 @@
-// 最終版 server.js（ログ付き：取得テーブル確認用）
+// 最終版 server.js（観測値一覧テーブル限定で取得する版）
 
 const express = require('express');
 const puppeteer = require('puppeteer');
@@ -55,16 +55,19 @@ async function fetchUnazukiData() {
     });
 
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(6000); // レンダリング待機を6秒に延長
+    await page.waitForTimeout(5000);
 
     const rawData = await page.evaluate(() => {
-      const rows = Array.from(document.querySelectorAll('table tbody tr'));
+      const tables = Array.from(document.querySelectorAll('table'));
+      const targetTable = tables.find(tbl => tbl.innerText.includes('貯水率利水容量'));
+      if (!targetTable) return [];
+      const rows = Array.from(targetTable.querySelectorAll('tbody tr'));
       return rows.map(row => Array.from(row.querySelectorAll('td')).map(td => td.innerText.trim()));
     });
 
     addLog('データ取得成功', `行数: ${rawData.length}`);
 
-    for (let i = 0; i < Math.min(rawData.length, 5); i++) {
+    for (let i = 0; i < Math.min(5, rawData.length); i++) {
       addLog(`取得行${i}`, '', rawData[i]);
     }
 
@@ -93,7 +96,7 @@ async function fetchUnazukiData() {
           let dateForObs = date;
           let time = timeRaw;
           if (timeRaw.startsWith('24:')) {
-            time = '00:' + time.split(':')[1];
+            time = '00:' + timeRaw.split(':')[1];
             const tmp = new Date(`${year}/${date} 00:00`);
             tmp.setDate(tmp.getDate() + 1);
             dateForObs = `${String(tmp.getMonth() + 1).padStart(2, '0')}/${String(tmp.getDate()).padStart(2, '0')}`;
