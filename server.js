@@ -1,4 +1,4 @@
-// 最終版 server.js（観測値一覧テーブル対応 + 正確な観測日時・列マッピング + JST対応）
+// 最終版 server.js（ログ付き：取得テーブル確認用）
 
 const express = require('express');
 const puppeteer = require('puppeteer');
@@ -55,7 +55,7 @@ async function fetchUnazukiData() {
     });
 
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(6000); // レンダリング待機を6秒に延長
 
     const rawData = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('table tbody tr'));
@@ -63,6 +63,10 @@ async function fetchUnazukiData() {
     });
 
     addLog('データ取得成功', `行数: ${rawData.length}`);
+
+    for (let i = 0; i < Math.min(rawData.length, 5); i++) {
+      addLog(`取得行${i}`, '', rawData[i]);
+    }
 
     let currentDate = null;
     const year = new Date().getFullYear();
@@ -88,7 +92,7 @@ async function fetchUnazukiData() {
 
           let dateForObs = date;
           let time = timeRaw;
-          if (time.startsWith('24:')) {
+          if (timeRaw.startsWith('24:')) {
             time = '00:' + time.split(':')[1];
             const tmp = new Date(`${year}/${date} 00:00`);
             tmp.setDate(tmp.getDate() + 1);
